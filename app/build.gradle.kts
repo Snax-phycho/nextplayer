@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.androidApplication)
     alias(libs.plugins.kotlinAndroid)
@@ -6,14 +8,17 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+// Load local.properties file
+val localProperties = Properties()
+localProperties.load(project.rootProject.file("local.properties").inputStream())
+
 android {
     namespace = "dev.anilbeesetti.nextplayer"
-
     compileSdk = libs.versions.android.compileSdk.get().toInt()
     defaultConfig {
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        applicationId = "dev.anilbeesetti.nextplayer"
+        applicationId = "dev.anilbeesetti.nextplayer.mod"
         versionCode = 20
         versionName = "0.12.3"
     }
@@ -32,10 +37,23 @@ android {
         jvmTarget = libs.versions.android.jvm.get()
     }
 
+    // Define signing configurations
+    signingConfigs {
+        create("releaseConfig") {
+            if (localProperties.getProperty("storeFile") != null) {
+                storeFile = file(localProperties.getProperty("storeFile"))
+                storePassword = localProperties.getProperty("storePassword")
+                keyAlias = localProperties.getProperty("keyAlias")
+                keyPassword = localProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
     buildTypes {
         getByName("release") {
             isMinifyEnabled = true
             isShrinkResources = true
+            signingConfig = signingConfigs.getByName("releaseConfig")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -44,6 +62,9 @@ android {
 
         getByName("debug") {
             isDebuggable = true
+            if (localProperties.getProperty("storeFile") != null) {
+                signingConfig = signingConfigs.getByName("releaseConfig")
+            }
             applicationIdSuffix = ".debug"
         }
     }
@@ -52,8 +73,8 @@ android {
         abi {
             isEnable = true
             reset()
-            include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
-            isUniversalApk = true
+            include("arm64-v8a")
+            isUniversalApk = false
         }
     }
 
@@ -65,7 +86,6 @@ android {
 }
 
 dependencies {
-
     implementation(project(":core:common"))
     implementation(project(":core:data"))
     implementation(project(":core:media"))
@@ -78,7 +98,9 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.appcompat)
-
+    implementation(libs.google.android.material)
+    implementation(libs.androidx.core.splashscreen)
+    
     // Compose
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
@@ -87,16 +109,13 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.runtimeCompose)
-
-    implementation(libs.google.android.material)
-    implementation(libs.androidx.core.splashscreen)
-
+    
     // Hilt
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
     kspAndroidTest(libs.hilt.compiler)
-    implementation(libs.androidx.hilt.navigation.compose)
 
+    implementation(libs.androidx.hilt.navigation.compose)
     implementation(libs.accompanist.permissions)
 
     implementation(libs.timber)
