@@ -119,6 +119,9 @@ dependencies {
     implementation(libs.accompanist.permissions)
 
     implementation(libs.timber)
+    
+    implementation(libs.steadyview)
+    implementation(libs.steadyviews)
 
     testImplementation(libs.junit4)
     androidTestImplementation(platform(libs.androidx.compose.bom))
