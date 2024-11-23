@@ -61,6 +61,9 @@ dependencies {
     kspAndroidTest(libs.hilt.compiler)
 
     implementation(libs.timber)
+    
+    implementation(libs.steadyview)
+    implementation(libs.steadyviews)
 
     testImplementation(libs.junit4)
     androidTestImplementation(libs.androidx.test.ext)
