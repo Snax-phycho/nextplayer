@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.androidApplication)
     alias(libs.plugins.kotlinAndroid)
@@ -6,6 +8,10 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+// Load local.properties file
+val localProperties = Properties()
+localProperties.load(project.rootProject.file("local.properties").inputStream())
+
 android {
     namespace = "dev.anilbeesetti.nextplayer"
 
@@ -13,7 +19,7 @@ android {
     defaultConfig {
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
-        applicationId = "dev.anilbeesetti.nextplayer"
+        applicationId = "dev.anilbeesetti.nextplayer.mod"
         versionCode = 31
         versionName = "0.13.0"
     }
@@ -31,11 +37,24 @@ android {
     kotlinOptions {
         jvmTarget = libs.versions.android.jvm.get()
     }
+    
+    // Define signing configurations
+    signingConfigs {
+        create("releaseConfig") {
+            if (localProperties.getProperty("storeFile") != null) {
+                storeFile = file(localProperties.getProperty("storeFile"))
+                storePassword = localProperties.getProperty("storePassword")
+                keyAlias = localProperties.getProperty("keyAlias")
+                keyPassword = localProperties.getProperty("keyPassword")
+            }
+        }
+    }
 
     buildTypes {
         getByName("release") {
             isMinifyEnabled = true
             isShrinkResources = true
+            signingConfig = signingConfigs.getByName("releaseConfig")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -44,6 +63,9 @@ android {
 
         getByName("debug") {
             isDebuggable = true
+            if (localProperties.getProperty("storeFile") != null) {
+                signingConfig = signingConfigs.getByName("releaseConfig")
+            }
             applicationIdSuffix = ".debug"
         }
     }
@@ -61,8 +83,10 @@ android {
         abi {
             isEnable = true
             reset()
-            include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
-            isUniversalApk = true
+            // include("armeabi-v7a", "arm64-v8a", "x86", "x86_64")
+            // isUniversalApk = true
+            include("arm64-v8a")
+            isUniversalApk = false
         }
     }
 
