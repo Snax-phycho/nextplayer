@@ -1,7 +1,6 @@
 package dev.anilbeesetti.nextplayer.feature.player
 
 import android.annotation.SuppressLint
-import android.app.Activity
 import android.app.AppOpsManager
 import android.app.PendingIntent
 import android.app.PictureInPictureParams
@@ -44,6 +43,7 @@ import androidx.annotation.DrawableRes
 import androidx.annotation.RequiresApi
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.net.toUri
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.C
@@ -68,6 +68,7 @@ import dev.anilbeesetti.nextplayer.core.common.Utils
 import dev.anilbeesetti.nextplayer.core.common.extensions.getMediaContentUri
 import dev.anilbeesetti.nextplayer.core.common.extensions.isDeviceTvBox
 import dev.anilbeesetti.nextplayer.core.model.ControlButtonsPosition
+import dev.anilbeesetti.nextplayer.core.model.LoopMode
 import dev.anilbeesetti.nextplayer.core.model.ThemeConfig
 import dev.anilbeesetti.nextplayer.core.model.VideoZoom
 import dev.anilbeesetti.nextplayer.core.ui.R as coreUiR
@@ -91,6 +92,7 @@ import dev.anilbeesetti.nextplayer.feature.player.service.PlayerService
 import dev.anilbeesetti.nextplayer.feature.player.service.addSubtitleTrack
 import dev.anilbeesetti.nextplayer.feature.player.service.getAudioSessionId
 import dev.anilbeesetti.nextplayer.feature.player.service.getSkipSilenceEnabled
+import dev.anilbeesetti.nextplayer.feature.player.service.stopPlayerSession
 import dev.anilbeesetti.nextplayer.feature.player.service.switchAudioTrack
 import dev.anilbeesetti.nextplayer.feature.player.service.switchSubtitleTrack
 import dev.anilbeesetti.nextplayer.feature.player.utils.BrightnessManager
@@ -98,6 +100,7 @@ import dev.anilbeesetti.nextplayer.feature.player.utils.PlayerApi
 import dev.anilbeesetti.nextplayer.feature.player.utils.PlayerGestureHelper
 import dev.anilbeesetti.nextplayer.feature.player.utils.VolumeManager
 import dev.anilbeesetti.nextplayer.feature.player.utils.toMillis
+import kotlin.apply
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -131,6 +134,8 @@ class PlayerActivity : AppCompatActivity() {
 
     private var playInBackground: Boolean = false
     private var isIntentNew: Boolean = true
+
+    private var isPipActive: Boolean = false
 
     private val shouldFastSeek: Boolean
         get() = playerPreferences.shouldFastSeek(mediaController?.duration ?: C.TIME_UNSET)
@@ -181,6 +186,7 @@ class PlayerActivity : AppCompatActivity() {
     private lateinit var videoTitleTextView: TextView
     private lateinit var videoZoomButton: ImageButton
     private lateinit var playInBackgroundButton: ImageButton
+    private lateinit var loopModeButton: ImageButton
     private lateinit var extraControls: LinearLayout
 
     private val isPipSupported: Boolean by lazy {
@@ -244,6 +250,7 @@ class PlayerActivity : AppCompatActivity() {
         videoTitleTextView = binding.playerView.findViewById(R.id.video_name)
         videoZoomButton = binding.playerView.findViewById(R.id.btn_video_zoom)
         playInBackgroundButton = binding.playerView.findViewById(R.id.btn_background)
+        loopModeButton = binding.playerView.findViewById(R.id.btn_loop_mode)
         extraControls = binding.playerView.findViewById(R.id.extra_controls)
 
         if (playerPreferences.controlButtonsPosition == ControlButtonsPosition.RIGHT) {
@@ -308,10 +315,7 @@ class PlayerActivity : AppCompatActivity() {
         playerApi = PlayerApi(this)
 
         onBackPressedDispatcher.addCallback {
-            mediaController?.run {
-                clearMediaItems()
-                stop()
-            }
+            finishAndStopPlayerSession()
         }
     }
 
@@ -325,16 +329,17 @@ class PlayerActivity : AppCompatActivity() {
             mediaController = controllerFuture?.await()
 
             setOrientation()
-            applyVideoZoom(videoZoom = playerPreferences.playerVideoZoom, showInfo = false)
+            applyVideoZoom(videoZoom = playerPreferences.playerVideoZoom)
             mediaController?.currentMediaItem?.mediaId?.let {
                 applyVideoScale(videoScale = viewModel.getVideoState(it)?.videoScale ?: 1f)
             }
 
             mediaController?.run {
                 binding.playerView.player = this
-                binding.playerView.keepScreenOn = isPlaying
+                isMediaItemReady = currentMediaItem != null
                 toggleSystemBars(showBars = binding.playerView.isControllerFullyVisible)
                 videoTitleTextView.text = currentMediaItem?.mediaMetadata?.title
+                applyLoopMode(playerPreferences.loopMode)
                 if (playerPreferences.shouldUseVolumeBoost) {
                     try {
                         volumeManager.loudnessEnhancer = LoudnessEnhancer(getAudioSessionId())
@@ -342,6 +347,7 @@ class PlayerActivity : AppCompatActivity() {
                         e.printStackTrace()
                     }
                 }
+                updateKeepScreenOnFlag()
                 addListener(playbackStateListener)
                 startPlayback()
             }
@@ -362,14 +368,18 @@ class PlayerActivity : AppCompatActivity() {
             }
             removeListener(playbackStateListener)
         }
-        if (subtitleFileLauncherLaunchedForMediaItem != null) {
+        val shouldPlayInBackground = playInBackground || playerPreferences.autoBackgroundPlay
+        if (subtitleFileLauncherLaunchedForMediaItem != null || !shouldPlayInBackground) {
             mediaController?.pause()
-        } else if (!playerPreferences.autoBackgroundPlay && !playInBackground) {
-            mediaController?.run {
-                clearMediaItems()
-                stop()
+        }
+
+        if (isPipActive) {
+            finish()
+            if (!shouldPlayInBackground) {
+                mediaController?.stopPlayerSession()
             }
         }
+
         controllerFuture?.run {
             MediaController.releaseFuture(this)
             controllerFuture = null
@@ -401,8 +411,11 @@ class PlayerActivity : AppCompatActivity() {
         }
     }
 
+    @SuppressLint("UnspecifiedRegisterReceiverFlag")
     @RequiresApi(Build.VERSION_CODES.O)
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        isPipActive = isInPictureInPictureMode
         if (isInPictureInPictureMode) {
             binding.playerView.subtitleView?.setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION)
             playerUnlockControls.visibility = View.INVISIBLE
@@ -415,7 +428,9 @@ class PlayerActivity : AppCompatActivity() {
                         PIP_ACTION_NEXT -> mediaController?.seekToNext()
                         PIP_ACTION_PREVIOUS -> mediaController?.seekToPrevious()
                     }
-                    updatePictureInPictureParams()
+                    if (isInPictureInPictureMode && !isFinishing && !isDestroyed) {
+                        updatePictureInPictureParams()
+                    }
                 }
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -433,12 +448,20 @@ class PlayerActivity : AppCompatActivity() {
                 pipBroadcastReceiver = null
             }
         }
-        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
     }
 
     @RequiresApi(Build.VERSION_CODES.O)
     private fun updatePictureInPictureParams(enableAutoEnter: Boolean = mediaController?.isPlaying == true): PictureInPictureParams {
-        val displayAspectRatio = Rational(binding.playerView.width, binding.playerView.height)
+        val playerViewWidth = binding.playerView.width
+        val playerViewHeight = binding.playerView.height
+
+        // Validate playerView dimensions
+        if (playerViewWidth <= 0 || playerViewHeight <= 0) {
+            Timber.w("Invalid playerView dimensions: $playerViewWidth x $playerViewHeight")
+            return PictureInPictureParams.Builder().build()
+        }
+
+        val displayAspectRatio = Rational(playerViewWidth, playerViewHeight)
 
         return PictureInPictureParams.Builder().apply {
             val aspectRatio = calculateVideoAspectRatio()
@@ -456,34 +479,42 @@ class PlayerActivity : AppCompatActivity() {
                 listOf(
                     createPipAction(
                         context = this@PlayerActivity,
-                        "skip to previous",
-                        coreUiR.drawable.ic_skip_prev,
-                        PIP_ACTION_PREVIOUS,
+                        title = "skip to previous",
+                        icon = coreUiR.drawable.ic_skip_prev,
+                        actionCode = PIP_ACTION_PREVIOUS,
                     ),
                     if (mediaController?.isPlaying == true) {
                         createPipAction(
                             context = this@PlayerActivity,
-                            "pause",
-                            coreUiR.drawable.ic_pause,
-                            PIP_ACTION_PAUSE,
+                            title = "pause",
+                            icon = coreUiR.drawable.ic_pause,
+                            actionCode = PIP_ACTION_PAUSE,
                         )
                     } else {
                         createPipAction(
                             context = this@PlayerActivity,
-                            "play",
-                            coreUiR.drawable.ic_play,
-                            PIP_ACTION_PLAY,
+                            title = "play",
+                            icon = coreUiR.drawable.ic_play,
+                            actionCode = PIP_ACTION_PLAY,
                         )
                     },
                     createPipAction(
                         context = this@PlayerActivity,
-                        "skip to next",
-                        coreUiR.drawable.ic_skip_next,
-                        PIP_ACTION_NEXT,
+                        title = "skip to next",
+                        icon = coreUiR.drawable.ic_skip_next,
+                        actionCode = PIP_ACTION_NEXT,
                     ),
                 ),
             )
-        }.build().also { setPictureInPictureParams(it) }
+        }.build().also { params ->
+            try {
+                if (!isFinishing && !isDestroyed) {
+                    setPictureInPictureParams(params)
+                }
+            } catch (e: IllegalStateException) {
+                Timber.e(e, "Failed to set picture-in-picture params")
+            }
+        }
     }
 
     private fun calculateVideoAspectRatio(): Rational? {
@@ -606,13 +637,13 @@ class PlayerActivity : AppCompatActivity() {
         }
         videoZoomButton.setOnClickListener {
             val videoZoom = playerPreferences.playerVideoZoom.next()
-            applyVideoZoom(videoZoom = videoZoom, showInfo = true)
+            changeAndSaveVideoZoom(videoZoom = videoZoom)
         }
 
         videoZoomButton.setOnLongClickListener {
             VideoZoomOptionsDialogFragment(
                 currentVideoZoom = playerPreferences.playerVideoZoom,
-                onVideoZoomOptionSelected = { applyVideoZoom(videoZoom = it, showInfo = true) },
+                onVideoZoomOptionSelected = { changeAndSaveVideoZoom(videoZoom = it) },
             ).show(supportFragmentManager, "VideoZoomOptionsDialog")
             true
         }
@@ -627,7 +658,7 @@ class PlayerActivity : AppCompatActivity() {
                 Toast.makeText(this, coreUiR.string.enable_pip_from_settings, Toast.LENGTH_SHORT).show()
                 try {
                     Intent("android.settings.PICTURE_IN_PICTURE_SETTINGS").apply {
-                        data = Uri.parse("package:$packageName")
+                        data = "package:$packageName".toUri()
                         startActivity(this@apply)
                     }
                 } catch (e: Exception) {
@@ -645,16 +676,57 @@ class PlayerActivity : AppCompatActivity() {
         backButton.setOnClickListener {
             onBackPressedDispatcher.onBackPressed()
         }
+
+        updateLoopModeIcon(playerPreferences.loopMode)
+        loopModeButton.setOnClickListener {
+            val currentLoopMode = playerPreferences.loopMode
+            val nextLoopMode = when (currentLoopMode) {
+                LoopMode.OFF -> LoopMode.ONE
+                LoopMode.ONE -> LoopMode.ALL
+                LoopMode.ALL -> LoopMode.OFF
+            }
+
+            viewModel.setLoopMode(nextLoopMode)
+            updateLoopModeIcon(nextLoopMode)
+            applyLoopMode(nextLoopMode)
+            showPlayerInfo(
+                info = when (nextLoopMode) {
+                    LoopMode.OFF -> getString(coreUiR.string.loop_mode_off)
+                    LoopMode.ONE -> getString(coreUiR.string.loop_mode_one)
+                    LoopMode.ALL -> getString(coreUiR.string.loop_mode_all)
+                },
+            )
+        }
+    }
+
+    private fun updateLoopModeIcon(loopMode: LoopMode) {
+        val iconResId = when (loopMode) {
+            LoopMode.OFF -> coreUiR.drawable.ic_loop_off
+            LoopMode.ONE -> coreUiR.drawable.ic_loop_one
+            LoopMode.ALL -> coreUiR.drawable.ic_loop_all
+        }
+        loopModeButton.setImageResource(iconResId)
+    }
+
+    private fun applyLoopMode(loopMode: LoopMode) {
+        mediaController?.repeatMode = when (loopMode) {
+            LoopMode.OFF -> Player.REPEAT_MODE_OFF
+            LoopMode.ONE -> Player.REPEAT_MODE_ONE
+            LoopMode.ALL -> Player.REPEAT_MODE_ALL
+        }
     }
 
     private fun startPlayback() {
         val uri = intent.data ?: return
 
-        // If the intent is not new and the current media item is not null, return
-        if (!isIntentNew && mediaController?.currentMediaItem != null) return
+        val returningFromBackground = !isIntentNew && mediaController?.currentMediaItem != null
+        val isNewUriTheCurrentMediaItem = mediaController?.currentMediaItem?.localConfiguration?.uri.toString() == uri.toString()
 
-        // If the current media item is not null and the current media item's uri is the same as the intent's data, return
-        if (mediaController?.currentMediaItem?.localConfiguration?.uri.toString() == uri.toString()) return
+        if (returningFromBackground || isNewUriTheCurrentMediaItem) {
+            mediaController?.prepare()
+            mediaController?.playWhenReady = viewModel.playWhenReady
+            return
+        }
 
         isIntentNew = false
 
@@ -685,7 +757,11 @@ class PlayerActivity : AppCompatActivity() {
                 setUri(uri)
                 setMediaId(uri)
                 if (index == mediaItemIndexToPlay) {
-                    setMediaMetadata(MediaMetadata.Builder().setTitle(playerApi.title).build())
+                    setMediaMetadata(
+                        MediaMetadata.Builder().apply {
+                            setTitle(playerApi.title)
+                        }.build(),
+                    )
                     val apiSubs = playerApi.getSubs().map { subtitle ->
                         uriToSubtitleConfiguration(
                             uri = subtitle.uri,
@@ -711,7 +787,6 @@ class PlayerActivity : AppCompatActivity() {
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             super.onMediaItemTransition(mediaItem, reason)
             intent.data = mediaItem?.localConfiguration?.uri
-            isMediaItemReady = false
         }
 
         override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
@@ -721,7 +796,7 @@ class PlayerActivity : AppCompatActivity() {
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             super.onIsPlayingChanged(isPlaying)
-            binding.playerView.keepScreenOn = isPlaying
+            updateKeepScreenOnFlag()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && isPipSupported) {
                 updatePictureInPictureParams()
             }
@@ -742,7 +817,6 @@ class PlayerActivity : AppCompatActivity() {
 
         override fun onVideoSizeChanged(videoSize: VideoSize) {
             super.onVideoSizeChanged(videoSize)
-            applyVideoZoom(videoZoom = playerPreferences.playerVideoZoom, showInfo = false)
             if (videoSize.width != 0 && videoSize.height != 0) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && isPipSupported) {
                     updatePictureInPictureParams()
@@ -751,6 +825,7 @@ class PlayerActivity : AppCompatActivity() {
             }
             lifecycleScope.launch {
                 val videoScale = mediaController?.currentMediaItem?.mediaId?.let { viewModel.getVideoState(it)?.videoScale } ?: 1f
+                applyVideoZoom(videoZoom = playerPreferences.playerVideoZoom)
                 applyVideoScale(videoScale = videoScale)
             }
         }
@@ -778,9 +853,9 @@ class PlayerActivity : AppCompatActivity() {
         override fun onPlaybackStateChanged(playbackState: Int) {
             super.onPlaybackStateChanged(playbackState)
             when (playbackState) {
-                Player.STATE_ENDED, Player.STATE_IDLE -> {
+                Player.STATE_ENDED -> {
                     isPlaybackFinished = mediaController?.playbackState == Player.STATE_ENDED
-                    finish()
+                    finishAndStopPlayerSession()
                 }
 
                 Player.STATE_READY -> {
@@ -792,6 +867,16 @@ class PlayerActivity : AppCompatActivity() {
                 else -> {}
             }
         }
+
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            super.onPlayWhenReadyChanged(playWhenReady, reason)
+
+            if (reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM) {
+                if (mediaController?.repeatMode != Player.REPEAT_MODE_OFF) return
+                isPlaybackFinished = true
+                finishAndStopPlayerSession()
+            }
+        }
     }
 
     override fun finish() {
@@ -801,7 +886,7 @@ class PlayerActivity : AppCompatActivity() {
                 duration = mediaController?.duration ?: C.TIME_UNSET,
                 position = mediaController?.currentPosition ?: C.TIME_UNSET,
             )
-            setResult(Activity.RESULT_OK, result)
+            setResult(RESULT_OK, result)
         }
         super.finish()
     }
@@ -1030,12 +1115,12 @@ class PlayerActivity : AppCompatActivity() {
         binding.topInfoLayout.visibility = View.GONE
     }
 
-    private fun resetExoContentFrameWidthAndHeight() {
-        exoContentFrameLayout.layoutParams.width = LayoutParams.MATCH_PARENT
-        exoContentFrameLayout.layoutParams.height = LayoutParams.MATCH_PARENT
-        exoContentFrameLayout.scaleX = 1.0f
-        exoContentFrameLayout.scaleY = 1.0f
-        exoContentFrameLayout.requestLayout()
+    private fun updateKeepScreenOnFlag() {
+        if (mediaController?.isPlaying == true) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
     }
 
     private fun applyVideoScale(videoScale: Float) {
@@ -1044,8 +1129,15 @@ class PlayerActivity : AppCompatActivity() {
         exoContentFrameLayout.requestLayout()
     }
 
-    private fun applyVideoZoom(videoZoom: VideoZoom, showInfo: Boolean) {
-        viewModel.setVideoZoom(videoZoom)
+    private fun resetExoContentFrameWidthAndHeight() {
+        exoContentFrameLayout.layoutParams.width = LayoutParams.MATCH_PARENT
+        exoContentFrameLayout.layoutParams.height = LayoutParams.MATCH_PARENT
+        exoContentFrameLayout.scaleX = 1.0f
+        exoContentFrameLayout.scaleY = 1.0f
+        exoContentFrameLayout.requestLayout()
+    }
+
+    private fun applyVideoZoom(videoZoom: VideoZoom) {
         resetExoContentFrameWidthAndHeight()
         when (videoZoom) {
             VideoZoom.BEST_FIT -> {
@@ -1073,14 +1165,27 @@ class PlayerActivity : AppCompatActivity() {
                 videoZoomButton.setImageDrawable(this, coreUiR.drawable.ic_width_wide)
             }
         }
-        if (showInfo) {
-            lifecycleScope.launch {
-                binding.infoLayout.visibility = View.VISIBLE
-                binding.infoText.text = getString(videoZoom.nameRes())
-                delay(HIDE_DELAY_MILLIS)
-                binding.infoLayout.visibility = View.GONE
-            }
+    }
+
+    private fun changeAndSaveVideoZoom(videoZoom: VideoZoom) {
+        applyVideoZoom(videoZoom)
+        viewModel.setVideoZoom(videoZoom)
+
+        mediaController?.currentMediaItem?.mediaId?.let {
+            viewModel.updateMediumZoom(uri = it, zoom = 1f)
         }
+
+        lifecycleScope.launch {
+            binding.infoLayout.visibility = View.VISIBLE
+            binding.infoText.text = getString(videoZoom.nameRes())
+            delay(HIDE_DELAY_MILLIS)
+            binding.infoLayout.visibility = View.GONE
+        }
+    }
+
+    private fun finishAndStopPlayerSession() {
+        finish()
+        mediaController?.stopPlayerSession()
     }
 
     companion object {
@@ -1095,7 +1200,7 @@ class PlayerActivity : AppCompatActivity() {
 }
 
 @RequiresApi(Build.VERSION_CODES.O)
-fun createPipAction(
+private fun createPipAction(
     context: Context,
     title: String,
     @DrawableRes icon: Int,

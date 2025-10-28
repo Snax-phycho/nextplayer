@@ -56,7 +56,7 @@
     <string name="select_playback_speed">Επιλογή ταχύτητας αναπαραγωγής</string>
     <string name="appearance_description">Προσαρμόστε την εφαρμογή σύμφωνα με τις προτιμήσεις σας</string>
     <string name="ascending">Αύξουσα</string>
-    <string name="about_description">Έκδοση, ευχαριστίες</string>
+    <string name="about_description">Έκδοση, υποστήριξη, ευχαριστίες</string>
     <string name="appearance_name">Εμφάνιση</string>
     <string name="menu">Μενού</string>
     <string name="grant_permission">Χορήγηση άδειας</string>
@@ -191,7 +191,7 @@
     <string name="open_subtitle">Άνοιγμα τοπικών υποτίτλων</string>
     <string name="play_next_video">Αναπαραγωγή επόμενου</string>
     <string name="exit">Έξοδος</string>
-    <string name="mark_last_played_media">Επισήμανση τελευταίας αναπαραγωγής</string>
+    <string name="mark_last_played_media">Επισήμανση αναπαραγωγής</string>
     <string name="open_local_video">Τοπικό βίντεο</string>
     <string name="open_network_stream">Δικτυακή ροή</string>
     <string name="floating_play_button">Αιωρούμενο κουμπί</string>
@@ -210,4 +210,20 @@
     <string name="stop_player_session">Διακοπή συνεδρίας</string>
     <string name="background_play_description">Αναπαραγωγή στο παρασκήνιο όταν μεταβαίνετε στην αρχική οθόνη ή κλειδώνει η οθόνη.</string>
     <string name="enable_pip_from_settings">Το Picture-in-Picture είναι απενεργοποιημένο. Ενεργοποιήστε το στις Ρυθμίσεις για να χρησιμοποιήσετε αυτήν τη δυνατότητα.</string>
+    <string name="loop_mode_off">Επανάληψη: Ανενεργή</string>
+    <string name="loop_mode_all">Επανάληψη: Όλων</string>
+    <string name="loop_mode">Λειτουργία επανάληψης</string>
+    <string name="loop_mode_one">Επανάληψη: Ενός</string>
+    <string name="libraries">Βιβλιοθήκες</string>
+    <string name="github">Github</string>
+    <string name="donate">Δωρεά</string>
+    <string name="error_opening_link">Δε βρέθηκε εφαρμογή για τη διαχείριση αυτού του συνδέσμου</string>
+    <string name="support_the_developer_on">Υποστηρίξτε τον προγραμματιστή στο %1$s</string>
+    <string name="upi">UPI</string>
+    <string name="kofi">Ko-fi</string>
+    <string name="paypal">PayPal</string>
+    <string name="list">Λίστα</string>
+    <string name="media_layout">Διάταξη μέσων</string>
+    <string name="grid">Πλέγμα</string>
+    <string name="by">από τον %1$s</string>
 </resources>
