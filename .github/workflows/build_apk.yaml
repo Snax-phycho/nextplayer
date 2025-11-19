@@ -6,7 +6,7 @@ on:
 
 jobs:
   build_and_release:
-    name: Build Release APK and Create Draft Release
+    name: Build APK
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository

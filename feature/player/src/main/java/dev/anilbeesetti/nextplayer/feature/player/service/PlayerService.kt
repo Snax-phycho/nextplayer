@@ -6,6 +6,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import androidx.annotation.OptIn
+import androidx.core.net.toUri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -21,6 +22,7 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.session.CommandButton
+import androidx.media3.session.CommandButton.ICON_UNDEFINED
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import androidx.media3.session.SessionCommand
@@ -84,10 +86,7 @@ class PlayerService : MediaSessionService() {
     private val playbackStateListener = object : Player.Listener {
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             super.onMediaItemTransition(mediaItem, reason)
-            if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO && !playerPreferences.autoplay) {
-                mediaSession?.player?.stop()
-                return
-            }
+            if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) return
             isMediaItemReady = false
             if (mediaItem != null) {
                 serviceScope.launch {
@@ -96,6 +95,7 @@ class PlayerService : MediaSessionService() {
                         currentVideoState?.playbackSpeed ?: playerPreferences.defaultPlaybackSpeed,
                     )
                     currentVideoState?.let { state ->
+                        if (mediaSession?.player?.currentPosition != 0L) return@let
                         state.position?.takeIf { playerPreferences.resume == Resume.YES }?.let {
                             mediaSession?.player?.seekTo(it)
                         }
@@ -118,18 +118,22 @@ class PlayerService : MediaSessionService() {
                 -> {
                     val newMediaItem = newPosition.mediaItem
                     if (newMediaItem != null && oldMediaItem != newMediaItem) {
-                        mediaRepository.updateMediumPosition(
-                            uri = oldMediaItem.mediaId,
-                            position = oldPosition.positionMs.takeIf { reason == DISCONTINUITY_REASON_SEEK } ?: C.TIME_UNSET,
-                        )
+                        serviceScope.launch {
+                            mediaRepository.updateMediumPosition(
+                                uri = oldMediaItem.mediaId,
+                                position = oldPosition.positionMs.takeIf { reason == DISCONTINUITY_REASON_SEEK } ?: C.TIME_UNSET,
+                            )
+                        }
                     }
                 }
 
                 DISCONTINUITY_REASON_REMOVE -> {
-                    mediaRepository.updateMediumPosition(
-                        uri = oldMediaItem.mediaId,
-                        position = oldPosition.positionMs,
-                    )
+                    serviceScope.launch {
+                        mediaRepository.updateMediumPosition(
+                            uri = oldMediaItem.mediaId,
+                            position = oldPosition.positionMs,
+                        )
+                    }
                 }
 
                 else -> return
@@ -157,17 +161,43 @@ class PlayerService : MediaSessionService() {
             super.onPlaybackStateChanged(playbackState)
 
             if (playbackState == Player.STATE_ENDED || playbackState == Player.STATE_IDLE) {
-                mediaSession?.player?.trackSelectionParameters = TrackSelectionParameters.getDefaults(this@PlayerService)
+                mediaSession?.player?.trackSelectionParameters = TrackSelectionParameters.DEFAULT
                 mediaSession?.player?.setPlaybackSpeed(playerPreferences.defaultPlaybackSpeed)
             }
 
             if (playbackState == Player.STATE_READY) {
                 mediaSession?.player?.let {
-                    mediaRepository.updateMediumLastPlayedTime(
-                        uri = it.currentMediaItem?.mediaId ?: return@let,
-                        lastPlayedTime = System.currentTimeMillis(),
-                    )
+                    serviceScope.launch {
+                        mediaRepository.updateMediumLastPlayedTime(
+                            uri = it.currentMediaItem?.mediaId ?: return@launch,
+                            lastPlayedTime = System.currentTimeMillis(),
+                        )
+                    }
                 }
+            }
+        }
+
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            super.onPlayWhenReadyChanged(playWhenReady, reason)
+
+            if (reason == Player.PLAY_WHEN_READY_CHANGE_REASON_END_OF_MEDIA_ITEM) {
+                if (mediaSession?.player?.repeatMode != Player.REPEAT_MODE_OFF) {
+                    mediaSession?.player?.seekTo(0)
+                    mediaSession?.player?.play()
+                    return
+                }
+                mediaSession?.run {
+                    player.clearMediaItems()
+                    player.stop()
+                }
+                stopSelf()
+            }
+        }
+
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            super.onIsPlayingChanged(isPlaying)
+            mediaSession?.run {
+                saveCurrentMediaPlaybackPosition(player)
             }
         }
     }
@@ -220,8 +250,8 @@ class PlayerService : MediaSessionService() {
 
             when (command) {
                 CustomCommands.ADD_SUBTITLE_TRACK -> {
-                    val subtitleUri = args.getString(CustomCommands.SUBTITLE_TRACK_URI_KEY)
-                        ?.let { Uri.parse(it) } ?: return@future SessionResult(SessionError.ERROR_BAD_VALUE)
+                    val subtitleUri = args.getString(CustomCommands.SUBTITLE_TRACK_URI_KEY)?.toUri()
+                        ?: return@future SessionResult(SessionError.ERROR_BAD_VALUE)
 
                     val newSubConfiguration = uriToSubtitleConfiguration(
                         uri = subtitleUri,
@@ -316,9 +346,11 @@ class PlayerService : MediaSessionService() {
 
                 CustomCommands.STOP_PLAYER_SESSION -> {
                     mediaSession?.run {
+                        saveCurrentMediaPlaybackPosition(player)
                         player.clearMediaItems()
                         player.stop()
-                    } ?: stopSelf()
+                    }
+                    stopSelf()
                     return@future SessionResult(SessionResult.RESULT_SUCCESS)
                 }
             }
@@ -361,6 +393,7 @@ class PlayerService : MediaSessionService() {
             .build()
             .also {
                 it.addListener(playbackStateListener)
+                it.pauseAtEndOfMediaItems = !playerPreferences.autoplay
             }
 
         try {
@@ -376,8 +409,8 @@ class PlayerService : MediaSessionService() {
                 setCallback(mediaSessionCallback)
                 setCustomLayout(
                     listOf(
-                        CommandButton.Builder()
-                            .setIconResId(coreUiR.drawable.ic_close)
+                        CommandButton.Builder(ICON_UNDEFINED)
+                            .setCustomIconResId(coreUiR.drawable.ic_close)
                             .setDisplayName(getString(coreUiR.string.stop_player_session))
                             .setSessionCommand(CustomCommands.STOP_PLAYER_SESSION.sessionCommand)
                             .setEnabled(true)
@@ -399,8 +432,6 @@ class PlayerService : MediaSessionService() {
 
     override fun onDestroy() {
         super.onDestroy()
-        serviceScope.cancel()
-        subtitleCacheDir.deleteFiles()
         mediaSession?.run {
             player.clearMediaItems()
             player.stop()
@@ -409,6 +440,20 @@ class PlayerService : MediaSessionService() {
             release()
             mediaSession = null
         }
+        subtitleCacheDir.deleteFiles()
+        serviceScope.cancel()
+    }
+
+    private fun saveCurrentMediaPlaybackPosition(player: Player) {
+        val mediaUri = player.currentMediaItem?.mediaId ?: return
+        val mediaPosition = player.currentPosition
+
+        serviceScope.launch {
+            mediaRepository.updateMediumPosition(
+                uri = mediaUri,
+                position = mediaPosition,
+            )
+        }
     }
 
     private suspend fun updatedMediaItemsWithMetadata(
@@ -416,11 +461,12 @@ class PlayerService : MediaSessionService() {
     ): List<MediaItem> = supervisorScope {
         mediaItems.map { mediaItem ->
             async {
-                val uri = Uri.parse(mediaItem.mediaId)
-                val mediaState = mediaRepository.getVideoState(uri = mediaItem.mediaId)
+                val uri = mediaItem.mediaId.toUri()
+                val video = mediaRepository.getVideoByUri(uri = mediaItem.mediaId)
+                val videoState = mediaRepository.getVideoState(uri = mediaItem.mediaId)
 
-                val title = mediaItem.mediaMetadata.title ?: mediaState?.title ?: getFilenameFromUri(uri)
-                val artwork = mediaState?.thumbnailPath?.let { Uri.parse(it) } ?: Uri.Builder().apply {
+                val title = mediaItem.mediaMetadata.title ?: video?.nameWithExtension ?: getFilenameFromUri(uri)
+                val artwork = video?.thumbnailPath?.toUri() ?: Uri.Builder().apply {
                     val defaultArtwork = R.drawable.artwork_default
                     scheme(ContentResolver.SCHEME_ANDROID_RESOURCE)
                     authority(resources.getResourcePackageName(defaultArtwork))
@@ -428,8 +474,8 @@ class PlayerService : MediaSessionService() {
                     appendPath(resources.getResourceEntryName(defaultArtwork))
                 }.build()
 
-                val externalSubs = mediaState?.externalSubs ?: emptyList()
-                val localSubs = (mediaState?.path ?: getPath(uri))?.let {
+                val externalSubs = videoState?.externalSubs ?: emptyList()
+                val localSubs = (videoState?.path ?: getPath(uri))?.let {
                     File(it).getLocalSubtitles(
                         context = this@PlayerService,
                         excludeSubsList = externalSubs,

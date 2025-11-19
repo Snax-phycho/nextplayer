@@ -8,6 +8,7 @@ import dev.anilbeesetti.nextplayer.core.data.models.VideoState
 import dev.anilbeesetti.nextplayer.core.data.repository.MediaRepository
 import dev.anilbeesetti.nextplayer.core.data.repository.PreferencesRepository
 import dev.anilbeesetti.nextplayer.core.domain.GetSortedPlaylistUseCase
+import dev.anilbeesetti.nextplayer.core.model.LoopMode
 import dev.anilbeesetti.nextplayer.core.model.Video
 import dev.anilbeesetti.nextplayer.core.model.VideoZoom
 import javax.inject.Inject
@@ -48,7 +49,9 @@ class PlayerViewModel @Inject constructor(
     }
 
     fun updateMediumZoom(uri: String, zoom: Float) {
-        mediaRepository.updateMediumZoom(uri, zoom)
+        viewModelScope.launch {
+            mediaRepository.updateMediumZoom(uri, zoom)
+        }
     }
 
     fun setPlayerBrightness(value: Float) {
@@ -60,6 +63,12 @@ class PlayerViewModel @Inject constructor(
     fun setVideoZoom(videoZoom: VideoZoom) {
         viewModelScope.launch {
             preferencesRepository.updatePlayerPreferences { it.copy(playerVideoZoom = videoZoom) }
+        }
+    }
+
+    fun setLoopMode(loopMode: LoopMode) {
+        viewModelScope.launch {
+            preferencesRepository.updatePlayerPreferences { it.copy(loopMode = loopMode) }
         }
     }
 }

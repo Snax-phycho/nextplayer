@@ -18,12 +18,12 @@
     <string name="unknown_error">Виникла невідома помилка</string>
     <string name="dynamic_theme_description">Застосувати кольори з системних шпалер до теми застосунку</string>
     <string name="controls_unlock">Розблокувати</string>
-    <string name="about_description">Версія, подяка</string>
+    <string name="about_description">Версія, підтримка, подяка</string>
     <string name="cancel">Скасувати</string>
     <string name="appearance_name">Зовнішній вигляд</string>
     <string name="descending">За спаданням</string>
     <string name="disable">Вимкнути</string>
-    <string name="done">Готово</string>
+    <string name="done">Застосувати</string>
     <string name="grant_permission">Надати дозвіл</string>
     <string name="double_tap_description">Виберіть дію жесту подвійного дотику</string>
     <string name="fast_seek">Швидкий пошук</string>
@@ -76,7 +76,7 @@
     <string name="subtitle">Субтитри</string>
     <string name="preferred_subtitle_lang">Бажана мова субтитрів</string>
     <string name="preferred_subtitle_lang_description">Мова доріжки субтитрів, яку ви хочете використовувати типово</string>
-    <string name="system_default">Система типово</string>
+    <string name="system_default">Як в системі</string>
     <string name="play_pause">Відтворення/Пауза</string>
     <string name="ff_rewind">Перемотування вперед/назад</string>
     <string name="play_pause_ff_rewind">Відтворення/пауза та перемотування вперед/назад</string>
@@ -160,7 +160,7 @@
     <string name="system_caption_style_desc">Натисніть, щоб відкрити налаштування системних субтитрів</string>
     <string name="extension">Розширення</string>
     <string name="path">Шлях</string>
-    <string name="resolution">Роздільна здатність</string>
+    <string name="resolution">Роздільність</string>
     <string name="long_press_gesture_desc">Тривале натискання для відтворення зі швидкістю %.1fx</string>
     <string name="long_press_gesture">Тривале натискання</string>
     <string name="require_audio_focus">Вимагати аудіо фокус</string>
@@ -189,8 +189,8 @@
     <string name="no_subtitle_tracks_found">Доріжки субтитрів для цього відео недоступні або не підтримуються.</string>
     <string name="rename">Перейменувати</string>
     <string name="rename_to">Перейменувати на</string>
-    <string name="floating_play_button">Плаваюча кнопка відтворення</string>
-    <string name="floating_play_button_desc">Показати плаваючу кнопку для відтворення останнього відтвореного медіафайлу.</string>
+    <string name="floating_play_button">Плавуча кнопка відтворення</string>
+    <string name="floating_play_button_desc">Показати плавучу кнопку для відтворення останнього відтвореного медіафайлу.</string>
     <string name="mark_last_played_media">Позначити останній відтворений медіафайл</string>
     <string name="mark_last_played_media_desc">Позначити останній відтворений медіафайл на домашньому екрані та в кожній теці</string>
     <string name="open_local_video">Відкрити локальне відео</string>
@@ -210,4 +210,20 @@
     <string name="stop_player_session">Зупинити сеанс відтворення</string>
     <string name="background_play">Фонове відтворення</string>
     <string name="enable_pip_from_settings">Функцію «Картинка в картинці» вимкнено. Увімкніть її в «Налаштуваннях», щоби використовувати.</string>
+    <string name="loop_mode_off">Повтор: вимк.</string>
+    <string name="loop_mode_all">Повтор: усе</string>
+    <string name="loop_mode_one">Повтор: один</string>
+    <string name="loop_mode">Режим повтору</string>
+    <string name="libraries">Бібліотеки</string>
+    <string name="error_opening_link">Не знайдено застосунку для оброблення цього посилання</string>
+    <string name="paypal">PayPal</string>
+    <string name="upi">UPI</string>
+    <string name="by">від %1$s</string>
+    <string name="donate">Задонатити</string>
+    <string name="github">Github</string>
+    <string name="support_the_developer_on">Підтримати розробника на %1$s</string>
+    <string name="kofi">Ko-fi</string>
+    <string name="media_layout">Розміщення медіафайлів</string>
+    <string name="list">Список</string>
+    <string name="grid">Сітка</string>
 </resources>
