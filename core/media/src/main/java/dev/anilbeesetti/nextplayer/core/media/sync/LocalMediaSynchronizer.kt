@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.database.ContentObserver
 import android.provider.MediaStore
+import coil3.ImageLoader
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.anilbeesetti.nextplayer.core.common.Dispatcher
 import dev.anilbeesetti.nextplayer.core.common.NextDispatchers
@@ -42,6 +43,7 @@ class LocalMediaSynchronizer @Inject constructor(
     private val mediumDao: MediumDao,
     private val mediumStateDao: MediumStateDao,
     private val directoryDao: DirectoryDao,
+    private val imageLoader: ImageLoader,
     @ApplicationScope private val applicationScope: CoroutineScope,
     @ApplicationContext private val context: Context,
     @Dispatcher(NextDispatchers.IO) private val dispatcher: CoroutineDispatcher,
@@ -88,8 +90,7 @@ class LocalMediaSynchronizer @Inject constructor(
         currentFolder: File,
         media: List<MediaVideo>,
     ): List<DirectoryEntity> {
-        val hasMediaInCurrentFolder = media.any { it.data.startsWith(currentFolder.path) }
-
+        val hasMediaInCurrentFolder = media.any { it.data.startsWith("${currentFolder.path}/") }
         if (!hasMediaInCurrentFolder) return emptyList()
 
         val currentDirectoryEntity = DirectoryEntity(
@@ -153,10 +154,9 @@ class LocalMediaSynchronizer @Inject constructor(
         mediumStateDao.delete(unwantedMediaUris)
 
         // Delete unwanted thumbnails
-        val unwantedThumbnailFiles = unwantedMedia.mapNotNull { medium -> medium.mediumEntity.thumbnailPath?.let { File(it) } }
-        unwantedThumbnailFiles.forEach { file ->
+        unwantedMedia.forEach { media ->
             try {
-                file.delete()
+                imageLoader.diskCache?.remove(media.mediumEntity.uriString)
             } catch (e: Exception) {
                 e.printStackTrace()
             }

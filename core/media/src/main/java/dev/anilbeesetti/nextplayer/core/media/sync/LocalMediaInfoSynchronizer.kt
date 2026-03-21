@@ -1,14 +1,13 @@
 package dev.anilbeesetti.nextplayer.core.media.sync
 
 import android.content.Context
-import android.graphics.Bitmap
 import android.net.Uri
 import android.util.Log
+import coil3.ImageLoader
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.anilbeesetti.nextplayer.core.common.Dispatcher
 import dev.anilbeesetti.nextplayer.core.common.NextDispatchers
 import dev.anilbeesetti.nextplayer.core.common.di.ApplicationScope
-import dev.anilbeesetti.nextplayer.core.common.extensions.thumbnailCacheDir
 import dev.anilbeesetti.nextplayer.core.database.dao.MediumDao
 import dev.anilbeesetti.nextplayer.core.database.entities.AudioStreamInfoEntity
 import dev.anilbeesetti.nextplayer.core.database.entities.SubtitleStreamInfoEntity
@@ -17,71 +16,78 @@ import io.github.anilbeesetti.nextlib.mediainfo.AudioStream
 import io.github.anilbeesetti.nextlib.mediainfo.MediaInfoBuilder
 import io.github.anilbeesetti.nextlib.mediainfo.SubtitleStream
 import io.github.anilbeesetti.nextlib.mediainfo.VideoStream
-import java.io.File
-import java.io.FileOutputStream
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class LocalMediaInfoSynchronizer @Inject constructor(
     private val mediumDao: MediumDao,
+    private val imageLoader: ImageLoader,
     @ApplicationScope private val applicationScope: CoroutineScope,
     @ApplicationContext private val context: Context,
     @Dispatcher(NextDispatchers.Default) private val dispatcher: CoroutineDispatcher,
 ) : MediaInfoSynchronizer {
 
-    private val media = MutableSharedFlow<Uri>()
+    private val activeSyncJobs = mutableMapOf<String, Job>()
+    private val mutex = Mutex()
 
-    override suspend fun addMedia(uri: Uri) = media.emit(uri)
+    override fun sync(uri: Uri) {
+        applicationScope.launch(dispatcher) {
+            val uriString = uri.toString()
 
-    private suspend fun sync(): Unit = withContext(dispatcher) {
-        media.collect { mediumUri ->
-            val medium = mediumDao.getWithInfo(mediumUri.toString()) ?: return@collect
-            if (medium.mediumEntity.thumbnailPath?.let { File(it) }?.exists() == true) {
-                return@collect
+            mutex.withLock {
+                activeSyncJobs[uriString]
+            }?.join()
+
+            val job = applicationScope.launch(dispatcher) {
+                try {
+                    performSync(uri)
+                } finally {
+                    mutex.withLock {
+                        activeSyncJobs.remove(uriString)
+                    }
+                }
             }
 
-            val mediaInfo = runCatching {
-                MediaInfoBuilder().from(context = context, uri = mediumUri).build() ?: throw NullPointerException()
-            }.onFailure { e ->
-                e.printStackTrace()
-                Log.d(TAG, "sync: MediaInfoBuilder exception", e)
-            }.getOrNull() ?: return@collect
-
-            val thumbnail = runCatching { mediaInfo.getFrame() }.getOrNull()
-            mediaInfo.release()
-
-            val videoStreamInfo = mediaInfo.videoStream?.toVideoStreamInfoEntity(medium.mediumEntity.uriString)
-            val audioStreamsInfo = mediaInfo.audioStreams.map {
-                it.toAudioStreamInfoEntity(medium.mediumEntity.uriString)
+            mutex.withLock {
+                activeSyncJobs[uriString] = job
             }
-            val subtitleStreamsInfo = mediaInfo.subtitleStreams.map {
-                it.toSubtitleStreamInfoEntity(medium.mediumEntity.uriString)
-            }
-            val thumbnailPath = thumbnail?.saveTo(
-                storageDir = context.thumbnailCacheDir,
-                quality = 40,
-                fileName = medium.mediumEntity.mediaStoreId.toString(),
-            )
-
-            mediumDao.upsert(
-                medium.mediumEntity.copy(
-                    format = mediaInfo.format,
-                    thumbnailPath = thumbnailPath,
-                ),
-            )
-            videoStreamInfo?.let { mediumDao.upsertVideoStreamInfo(it) }
-            audioStreamsInfo.onEach { mediumDao.upsertAudioStreamInfo(it) }
-            subtitleStreamsInfo.onEach { mediumDao.upsertSubtitleStreamInfo(it) }
         }
     }
 
-    init {
-        applicationScope.launch { sync() }
+    override suspend fun clearThumbnailsCache() {
+        imageLoader.diskCache?.clear()
+        imageLoader.memoryCache?.clear()
+    }
+
+    private suspend fun performSync(uri: Uri) {
+        val medium = mediumDao.getWithInfo(uri.toString()) ?: return
+        if (medium.videoStreamInfo != null) return
+
+        val mediaInfo = runCatching {
+            MediaInfoBuilder().from(context = context, uri = uri).build() ?: throw NullPointerException()
+        }.onFailure { e ->
+            e.printStackTrace()
+            Log.d(TAG, "sync: MediaInfoBuilder exception", e)
+        }.getOrNull() ?: return
+        mediaInfo.release()
+
+        val videoStreamInfo = mediaInfo.videoStream?.toVideoStreamInfoEntity(medium.mediumEntity.uriString)
+        val audioStreamsInfo = mediaInfo.audioStreams.map {
+            it.toAudioStreamInfoEntity(medium.mediumEntity.uriString)
+        }
+        val subtitleStreamsInfo = mediaInfo.subtitleStreams.map {
+            it.toSubtitleStreamInfoEntity(medium.mediumEntity.uriString)
+        }
+
+        mediumDao.upsert(medium.mediumEntity.copy(format = mediaInfo.format))
+        videoStreamInfo?.let { mediumDao.upsertVideoStreamInfo(it) }
+        audioStreamsInfo.onEach { mediumDao.upsertAudioStreamInfo(it) }
+        subtitleStreamsInfo.onEach { mediumDao.upsertSubtitleStreamInfo(it) }
     }
 
     companion object {
@@ -124,19 +130,3 @@ private fun SubtitleStream.toSubtitleStreamInfoEntity(mediumUri: String) = Subti
     disposition = disposition,
     mediumUri = mediumUri,
 )
-
-suspend fun Bitmap.saveTo(
-    storageDir: File,
-    quality: Int = 100,
-    fileName: String,
-): String? = withContext(Dispatchers.IO) {
-    val thumbFile = File(storageDir, fileName)
-    try {
-        FileOutputStream(thumbFile).use { fos ->
-            compress(Bitmap.CompressFormat.JPEG, quality, fos)
-        }
-    } catch (e: Exception) {
-        e.printStackTrace()
-    }
-    return@withContext if (thumbFile.exists()) thumbFile.path else null
-}
